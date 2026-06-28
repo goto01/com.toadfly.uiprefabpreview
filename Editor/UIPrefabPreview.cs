@@ -184,8 +184,14 @@ namespace Toadfly.UIPrefabPreview
 
         private static void NeutralizeInnerCanvases(GameObject instance, Camera camera)
         {
+            // Components that require a Canvas must be removed before the Canvas itself,
+            // otherwise DestroyImmediate logs "Can't remove Canvas because X depends on it".
             foreach (var raycaster in instance.GetComponentsInChildren<GraphicRaycaster>(true)) {
                 Object.DestroyImmediate(raycaster);
+            }
+
+            foreach (var scaler in instance.GetComponentsInChildren<CanvasScaler>(true)) {
+                Object.DestroyImmediate(scaler);
             }
 
             foreach (var canvas in instance.GetComponentsInChildren<Canvas>(true)) {
@@ -193,15 +199,34 @@ namespace Toadfly.UIPrefabPreview
                     continue;
                 }
 
-                try {
+                if (CanDestroy(canvas)) {
                     Object.DestroyImmediate(canvas);
                 }
-                catch (System.Exception) {
-                    // A component depends on the Canvas; fall back to forcing world space.
+                else {
+                    // Another component still depends on the Canvas; render it in place.
                     canvas.renderMode = RenderMode.WorldSpace;
                     canvas.worldCamera = camera;
                 }
             }
+        }
+
+        private static bool CanDestroy(Canvas canvas)
+        {
+            foreach (var behaviour in canvas.GetComponents<MonoBehaviour>()) {
+                if (behaviour == null) {
+                    continue;
+                }
+
+                foreach (var attribute in behaviour.GetType().GetCustomAttributes(typeof(RequireComponent), true)) {
+                    var require = (RequireComponent)attribute;
+                    if (require.m_Type0 == typeof(Canvas)
+                        || require.m_Type1 == typeof(Canvas)
+                        || require.m_Type2 == typeof(Canvas)) {
+                        return false;
+                    }
+                }
+            }
+            return true;
         }
 
         private static Texture2D RenderToTexture(
