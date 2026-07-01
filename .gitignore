@@ -1,0 +1,16 @@
+# macOS
+.DS_Store
+
+# JetBrains / VS
+.idea/
+.vs/
+*.csproj
+*.sln
+*.user
+
+# Unity (this repo is a bare UPM package; no Library/Temp expected)
+Library/
+Temp/
+Obj/
+obj/
+Logs/
