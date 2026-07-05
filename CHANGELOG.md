@@ -5,6 +5,13 @@ All notable changes to this package are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2026-07-06
+
+### Fixed
+
+- Previewing a prefab that contains runtime scripts no longer spams the console. The preview copy is now built under an inactive root and its non-visual runtime behaviours are stripped before activation, so components that throw in `Awake`/`OnEnable` (e.g. a recycler view asserting its content is empty) never run during a preview render.
+- `NeutralizeInnerCanvases` no longer logs `Can't remove CanvasScaler because X depends on it`. Each canvas-related removal is now guarded against dependents (via `[RequireComponent]`), and a component another still depends on is left in place and rendered where it is.
+
 ## [0.1.1] - 2026-07-01
 
 ### Fixed

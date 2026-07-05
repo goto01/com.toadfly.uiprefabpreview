@@ -1,6 +1,6 @@
 {
   "name": "com.toadfly.uiprefabpreview",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "displayName": "UI Prefab Preview",
   "description": "Renders uGUI prefab previews in the Inspector via an off-screen camera, and can auto-select the UI Preview tab. Settings live in Project Settings and are stored per-user.",
   "unity": "6000.2",

@@ -87,28 +87,31 @@ namespace Toadfly.UIPrefabPreview
             var previousActive = RenderTexture.active;
 
             try {
-                instance = Object.Instantiate(source);
-                instance.hideFlags = HideFlags.HideAndDontSave;
-                instance.transform.position = Vector3.zero;
-                instance.transform.rotation = Quaternion.identity;
-
                 var camera = CreateCamera(out camGo, bgColor);
 
                 // Wrap the prefab in a single world-space canvas and remove any canvases
                 // inside it, so every Graphic renders through our camera regardless of how
                 // the prefab was authored (screen-overlay root, nested sub-canvas, none).
+                // The root starts inactive so nothing runs Awake/OnEnable while the copy is
+                // prepared; runtime behaviours are stripped before it is activated, so a
+                // prefab whose scripts throw during instantiation (e.g. a recycler view that
+                // asserts in Awake) previews without spamming the console.
                 root = new GameObject(
                     "UIPreviewRoot",
                     typeof(RectTransform),
                     typeof(Canvas));
                 root.hideFlags = HideFlags.HideAndDontSave;
+                root.SetActive(false);
 
                 var rootRect = root.GetComponent<RectTransform>();
                 rootRect.sizeDelta = referenceResolution;
                 rootRect.position = Vector3.zero;
                 root.GetComponent<Canvas>().renderMode = RenderMode.WorldSpace;
 
-                instance.transform.SetParent(root.transform, false);
+                instance = Object.Instantiate(source, root.transform, false);
+                instance.hideFlags = HideFlags.HideAndDontSave;
+                instance.transform.localPosition = Vector3.zero;
+                instance.transform.localRotation = Quaternion.identity;
 
                 if (instance.transform is RectTransform fragmentRect && Stretches(fragmentRect)) {
                     fragmentRect.anchorMin = new Vector2(0.5f, 0.5f);
@@ -117,11 +120,14 @@ namespace Toadfly.UIPrefabPreview
                     fragmentRect.anchoredPosition = Vector2.zero;
                 }
 
+                StripNonVisualBehaviours(instance);
                 NeutralizeInnerCanvases(instance, camera);
 
                 foreach (var t in root.GetComponentsInChildren<Transform>(true)) {
                     t.gameObject.layer = PreviewLayer;
                 }
+
+                root.SetActive(true);
 
                 var layoutRect = root.GetComponentInChildren<RectTransform>(true);
                 if (layoutRect != null) {
@@ -182,16 +188,55 @@ namespace Toadfly.UIPrefabPreview
             return camera;
         }
 
+        private static void StripNonVisualBehaviours(GameObject instance)
+        {
+            // Preview only needs visual/layout components. Removing every other script (while
+            // the copy is still inactive) keeps arbitrary runtime Awake/OnEnable logic from
+            // running during a preview render. Repeated passes resolve RequireComponent chains
+            // (a dependent is removed before the component it depends on).
+            bool removedAny;
+            do {
+                removedAny = false;
+                foreach (var behaviour in instance.GetComponentsInChildren<MonoBehaviour>(true)) {
+                    if (behaviour == null || IsVisualBehaviour(behaviour)) {
+                        continue;
+                    }
+                    if (!CanRemove(behaviour)) {
+                        continue;
+                    }
+                    Object.DestroyImmediate(behaviour);
+                    removedAny = true;
+                }
+            } while (removedAny);
+        }
+
+        private static bool IsVisualBehaviour(MonoBehaviour behaviour)
+        {
+            return behaviour is Graphic
+                || behaviour is ILayoutElement
+                || behaviour is ILayoutController
+                || behaviour is Mask
+                || behaviour is RectMask2D
+                || behaviour is BaseMeshEffect
+                || behaviour is CanvasScaler
+                || behaviour is GraphicRaycaster;
+        }
+
         private static void NeutralizeInnerCanvases(GameObject instance, Camera camera)
         {
             // Components that require a Canvas must be removed before the Canvas itself,
             // otherwise DestroyImmediate logs "Can't remove Canvas because X depends on it".
+            // Each removal is guarded so a component another still depends on is left in place.
             foreach (var raycaster in instance.GetComponentsInChildren<GraphicRaycaster>(true)) {
-                Object.DestroyImmediate(raycaster);
+                if (raycaster != null && CanRemove(raycaster)) {
+                    Object.DestroyImmediate(raycaster);
+                }
             }
 
             foreach (var scaler in instance.GetComponentsInChildren<CanvasScaler>(true)) {
-                Object.DestroyImmediate(scaler);
+                if (scaler != null && CanRemove(scaler)) {
+                    Object.DestroyImmediate(scaler);
+                }
             }
 
             foreach (var canvas in instance.GetComponentsInChildren<Canvas>(true)) {
@@ -199,7 +244,7 @@ namespace Toadfly.UIPrefabPreview
                     continue;
                 }
 
-                if (CanDestroy(canvas)) {
+                if (CanRemove(canvas)) {
                     Object.DestroyImmediate(canvas);
                 }
                 else {
@@ -210,23 +255,29 @@ namespace Toadfly.UIPrefabPreview
             }
         }
 
-        private static bool CanDestroy(Canvas canvas)
+        private static bool CanRemove(Component component)
         {
-            foreach (var behaviour in canvas.GetComponents<MonoBehaviour>()) {
-                if (behaviour == null) {
+            var type = component.GetType();
+            foreach (var other in component.GetComponents<Component>()) {
+                if (other == null || other == component) {
                     continue;
                 }
 
-                foreach (var attribute in behaviour.GetType().GetCustomAttributes(typeof(RequireComponent), true)) {
+                foreach (var attribute in other.GetType().GetCustomAttributes(typeof(RequireComponent), true)) {
                     var require = (RequireComponent)attribute;
-                    if (require.m_Type0 == typeof(Canvas)
-                        || require.m_Type1 == typeof(Canvas)
-                        || require.m_Type2 == typeof(Canvas)) {
+                    if (Requires(require.m_Type0, type)
+                        || Requires(require.m_Type1, type)
+                        || Requires(require.m_Type2, type)) {
                         return false;
                     }
                 }
             }
             return true;
+        }
+
+        private static bool Requires(System.Type required, System.Type type)
+        {
+            return required != null && required.IsAssignableFrom(type);
         }
 
         private static Texture2D RenderToTexture(
